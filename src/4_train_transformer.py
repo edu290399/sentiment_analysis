@@ -37,7 +37,7 @@ WEIGHT_DECAY = 0.01
 FORCE_GPU = False
 
 
-def load_data(file_path='data/sentiment140_preprocessed.csv', sample_frac=0.01, sample_size=None):
+def load_data(file_path='data/sentiment140_processed.csv', sample_frac=0.01, sample_size=None):
     """
     Carrega os dados já pré-processados do Sentiment140.
     
@@ -445,7 +445,7 @@ def main():
     # 1. Carregar dados (já pré-processados)
     # Durante desenvolvimento usamos apenas uma amostra dos dados para acelerar testes.
     # Para treinar com todo o dataset, chame load_data(..., sample_frac=None).
-    df = load_data('data/sentiment140_preprocessed.csv', sample_frac=0.01, sample_size=None)
+    df = load_data('data/sentiment140_processed.csv', sample_frac=None, sample_size=None)
     
     # 2. Preparar datasets
     train_dataset, eval_dataset = prepare_datasets(df, test_size=0.2)

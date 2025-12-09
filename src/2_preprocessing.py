@@ -17,6 +17,12 @@ except LookupError:
     nltk.download('punkt')
 
 try:
+    nltk.data.find('tokenizers/punkt_tab')
+except LookupError:
+    print("Baixando 'punkt_tab'...")
+    nltk.download('punkt_tab')
+
+try:
     nltk.data.find('corpora/stopwords')
 except LookupError:
     print("Baixando 'stopwords'...")
