@@ -31,10 +31,15 @@ LEARNING_RATE = 2e-5
 WARMUP_STEPS = 500
 WEIGHT_DECAY = 0.01
 
+# Se True, o script exige que haja GPU CUDA disponível e falha caso contrário.
+# Deixe como False por padrão para que o código rode também em ambientes só com CPU,
+# mas ainda use GPU automaticamente quando disponível.
+FORCE_GPU = False
 
-def load_data(file_path='data/sentiment140_processed.csv', sample_size=None):
+
+def load_data(file_path='data/sentiment140_preprocessed.csv', sample_frac=0.01, sample_size=None):
     """
-    Carrega os dados processados do Sentiment140.
+    Carrega os dados já pré-processados do Sentiment140.
     
     Args:
         file_path (str): Caminho do arquivo CSV
@@ -52,12 +57,27 @@ def load_data(file_path='data/sentiment140_processed.csv', sample_size=None):
     
     print(f"\nCarregando dados de: {file_path}")
     df = pd.read_csv(file_path)
-    
-    if sample_size and sample_size < len(df):
+
+    # Garantir tipos corretos
+    if 'text' not in df.columns or 'label' not in df.columns:
+        raise ValueError("O CSV precisa conter as colunas 'text' e 'label'.")
+
+    # Converter textos para string e tratar valores ausentes
+    df['text'] = df['text'].fillna('').astype(str)
+    # Garantir que os labels sejam inteiros (0/1)
+    df['label'] = df['label'].astype(int)
+
+    # Amostragem para testes mais rápidos
+    if sample_size is not None and sample_size < len(df):
         print(f"Amostrando {sample_size:,} exemplos do total de {len(df):,}")
         df = df.sample(n=sample_size, random_state=42).reset_index(drop=True)
+    elif sample_frac is not None and 0 < sample_frac < 1.0:
+        n_samples = int(len(df) * sample_frac)
+        print(f"Amostrando {n_samples:,} exemplos ({sample_frac*100:.1f}%) do total de {len(df):,}")
+        df = df.sample(n=n_samples, random_state=42).reset_index(drop=True)
     
-    print(f"✓ Dados carregados! Shape: {df.shape}")
+    # Usar apenas ASCII nos prints para evitar erros de encoding no Windows
+    print(f"OK - Dados carregados! Shape: {df.shape}")
     print(f"\nDistribuição de classes:")
     print(df['label'].value_counts().sort_index())
     
@@ -89,15 +109,16 @@ def prepare_datasets(df, test_size=0.2):
         stratify=df['label']  # Manter proporção de classes
     )
     
-    print(f"✓ Treino: {len(train_df):,} exemplos")
-    print(f"✓ Validação: {len(eval_df):,} exemplos")
+    # Usar apenas ASCII nos prints
+    print(f"Treino: {len(train_df):,} exemplos")
+    print(f"Validação: {len(eval_df):,} exemplos")
     
     # Converter para Dataset do Hugging Face
     print("\nConvertendo para formato Dataset...")
     train_dataset = Dataset.from_pandas(train_df[['text', 'label']])
     eval_dataset = Dataset.from_pandas(eval_df[['text', 'label']])
     
-    print("✓ Conversão concluída!")
+    print("Conversão concluída!")
     
     return train_dataset, eval_dataset
 
@@ -134,7 +155,7 @@ def tokenize_datasets(train_dataset, eval_dataset, tokenizer):
         tuple: (train_dataset_tokenized, eval_dataset_tokenized)
     """
     print("\n" + "="*70)
-    print("TOKENIZAÇÃO DOS DADOS")
+    print("TOKENIZACAO DOS DADOS")
     print("="*70)
     
     print("\nTokenizando conjunto de treino...")
@@ -144,14 +165,14 @@ def tokenize_datasets(train_dataset, eval_dataset, tokenizer):
         desc="Tokenizando treino"
     )
     
-    print("Tokenizando conjunto de validação...")
+    print("Tokenizando conjunto de validacao...")
     eval_dataset = eval_dataset.map(
         lambda x: tokenize_function(x, tokenizer),
         batched=True,
         desc="Tokenizando validação"
     )
     
-    print("✓ Tokenização concluída!")
+    print("Tokenizacao concluida!")
     
     return train_dataset, eval_dataset
 
@@ -200,10 +221,13 @@ def create_trainer(model, tokenizer, train_dataset, eval_dataset):
     print("CONFIGURANDO TREINAMENTO")
     print("="*70)
     
+    # Detectar dispositivo
+    use_cuda = torch.cuda.is_available()
+
     # Definir argumentos de treinamento
     training_args = TrainingArguments(
         output_dir="./results",
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",          # nome do argumento mudou nesta versão do transformers
         save_strategy="epoch",
         learning_rate=LEARNING_RATE,
         per_device_train_batch_size=TRAIN_BATCH_SIZE,
@@ -216,8 +240,9 @@ def create_trainer(model, tokenizer, train_dataset, eval_dataset):
         load_best_model_at_end=True,
         metric_for_best_model='f1',
         save_total_limit=2,  # Manter apenas os 2 melhores checkpoints
-        fp16=torch.cuda.is_available(),  # Mixed precision se GPU disponível
-        report_to='none'  # Desabilitar integrações (wandb, tensorboard, etc)
+        fp16=use_cuda,                # Mixed precision se GPU disponível
+        no_cuda=not use_cuda,         # Garante uso de CUDA quando disponível
+        report_to='none'              # Desabilitar integrações (wandb, tensorboard, etc)
     )
     
     print("\nConfiguração do Treinamento:")
@@ -228,8 +253,8 @@ def create_trainer(model, tokenizer, train_dataset, eval_dataset):
     print(f"  - Learning rate: {LEARNING_RATE}")
     print(f"  - Warmup steps: {WARMUP_STEPS}")
     print(f"  - Weight decay: {WEIGHT_DECAY}")
-    print(f"  - Device: {'GPU (CUDA)' if torch.cuda.is_available() else 'CPU'}")
-    print(f"  - Mixed Precision (FP16): {torch.cuda.is_available()}")
+    print(f"  - Device: {'GPU (CUDA)' if use_cuda else 'CPU'}")
+    print(f"  - Mixed Precision (FP16): {use_cuda}")
     
     # Data collator para padding dinâmico
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
@@ -245,7 +270,7 @@ def create_trainer(model, tokenizer, train_dataset, eval_dataset):
         compute_metrics=compute_metrics
     )
     
-    print("\n✓ Trainer configurado!")
+    print("\nTrainer configurado!")
     
     return trainer
 
@@ -269,7 +294,7 @@ def train_model(trainer):
     # Treinar modelo
     train_result = trainer.train()
     
-    print("\n✓ Treinamento concluído!")
+    print("\nTreinamento concluido!")
     
     return train_result
 
@@ -291,7 +316,7 @@ def evaluate_model(trainer):
     print("\nAvaliando modelo no conjunto de validação...")
     eval_results = trainer.evaluate()
     
-    print("\n✓ Avaliação concluída!")
+    print("\nAvaliacao concluida!")
     print("\nResultados Finais:")
     print("-" * 70)
     for metric, value in eval_results.items():
@@ -327,7 +352,7 @@ def save_model(trainer, tokenizer, save_dir="./models/sentiment_transformer"):
     trainer.save_model(save_dir)
     tokenizer.save_pretrained(save_dir)
     
-    print("✓ Modelo salvo com sucesso!")
+    print("Modelo salvo com sucesso!")
     
     # Informar tamanho
     total_size = sum(
@@ -386,7 +411,7 @@ def test_predictions(model, tokenizer, device):
             prediction = torch.argmax(probs, dim=-1).item()
             confidence = probs[0][prediction].item()
         
-        sentiment = "POSITIVO ✅" if prediction == 1 else "NEGATIVO ❌"
+        sentiment = "POSITIVO" if prediction == 1 else "NEGATIVO"
         
         print(f"\n{i}. Texto: {text[:60]}{'...' if len(text) > 60 else ''}")
         print(f"   Predição: {sentiment}")
@@ -403,14 +428,24 @@ def main():
     print("="*70)
     
     # Verificar device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    cuda_available = torch.cuda.is_available()
+
+    if FORCE_GPU and not cuda_available:
+        raise RuntimeError(
+            "FORCE_GPU está habilitado, mas nenhuma GPU CUDA foi encontrada.\n"
+            "Verifique se o PyTorch foi instalado com suporte a CUDA e se os drivers da GPU estão corretos."
+        )
+
+    device = torch.device('cuda' if cuda_available else 'cpu')
     print(f"\nDevice: {device}")
     if torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
         print(f"Memória disponível: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
     
-    # 1. Carregar dados
-    df = load_data('data/sentiment140_processed.csv', sample_size=None)
+    # 1. Carregar dados (já pré-processados)
+    # Durante desenvolvimento usamos apenas uma amostra dos dados para acelerar testes.
+    # Para treinar com todo o dataset, chame load_data(..., sample_frac=None).
+    df = load_data('data/sentiment140_preprocessed.csv', sample_frac=0.01, sample_size=None)
     
     # 2. Preparar datasets
     train_dataset, eval_dataset = prepare_datasets(df, test_size=0.2)
@@ -422,7 +457,7 @@ def main():
     
     print(f"\nCarregando tokenizer: {MODEL_NAME}")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    print("✓ Tokenizer carregado!")
+    print("Tokenizer carregado!")
     
     # 4. Tokenizar datasets
     train_dataset, eval_dataset = tokenize_datasets(
@@ -436,7 +471,7 @@ def main():
         num_labels=NUM_LABELS
     )
     model.to(device)
-    print("✓ Modelo carregado!")
+    print("Modelo carregado!")
     print(f"  - Parâmetros totais: {sum(p.numel() for p in model.parameters()):,}")
     print(f"  - Parâmetros treináveis: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
     
@@ -471,7 +506,7 @@ def main():
     print(f"\nModelo salvo em: ./models/sentiment_transformer")
     
     print("\n" + "="*70)
-    print("✓ FINE-TUNING CONCLUÍDO COM SUCESSO!")
+    print("FINE-TUNING CONCLUIDO COM SUCESSO!")
     print("="*70)
 
 

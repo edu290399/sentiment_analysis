@@ -18,7 +18,8 @@ seaborn
 jupyter
 
 # Hugging Face
-datasets             # Para Hugging Face Datasets
+# Versão fixa abaixo de 3.0.0 para garantir compatibilidade com o dataset 'sentiment140'
+datasets<3.0.0       # Para Hugging Face Datasets
 transformers         # Para modelos SOTA (Hugging Face)
 
 # Deep Learning
